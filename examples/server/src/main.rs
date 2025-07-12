@@ -4,11 +4,10 @@ use async_std::stream::StreamExt;
 use async_std::task;
 use async_tls::TlsAcceptor;
 use futures_lite::io::AsyncWriteExt;
-use rustls::{Certificate, PrivateKey, ServerConfig};
-use rustls_pemfile::{certs, read_one, Item};
+use rustls::pki_types::pem::{self, PemObject as _};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::ServerConfig;
 
-use std::fs::File;
-use std::io::BufReader;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,42 +27,33 @@ struct Options {
 }
 
 /// Load the passed certificates file
-fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
-    Ok(certs(&mut BufReader::new(File::open(path)?))
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid cert"))?
-        .into_iter()
-        .map(Certificate)
-        .collect())
+fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, pem::Error> {
+    CertificateDer::pem_file_iter(path)?.collect::<Result<Vec<_>, _>>()
 }
 
 /// Load the passed keys file
-fn load_key(path: &Path) -> io::Result<PrivateKey> {
-    match read_one(&mut BufReader::new(File::open(path)?)) {
-        Ok(Some(Item::RSAKey(data) | Item::PKCS8Key(data))) => Ok(PrivateKey(data)),
-        Ok(_) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid key in {}", path.display()),
-        )),
-        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidInput, e)),
-    }
+fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>, pem::Error> {
+    PrivateKeyDer::pem_file_iter(path)?
+        .collect::<Result<Vec<_>, _>>()?
+        .pop()
+        .ok_or(pem::Error::NoItemsFound)
 }
 
 /// Configure the server using rusttls
 /// See https://docs.rs/rustls/0.16.0/rustls/struct.ServerConfig.html for details
 ///
 /// A TLS server needs a certificate and a fitting private key
-fn load_config(options: &Options) -> io::Result<ServerConfig> {
+fn load_config(options: &Options) -> Result<ServerConfig, pem::Error> {
     let certs = load_certs(&options.cert)?;
     debug_assert_eq!(1, certs.len());
     let key = load_key(&options.key)?;
 
     // we don't use client authentication
     let config = ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         // set this server to use one cert together with the loaded private key
         .with_single_cert(certs, key)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+        .map_err(|err| pem::Error::Io(io::Error::new(io::ErrorKind::InvalidInput, err)))?;
 
     Ok(config)
 }
@@ -104,7 +94,7 @@ fn main() -> io::Result<()> {
         .next()
         .ok_or_else(|| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
 
-    let config = load_config(&options)?;
+    let config = load_config(&options).expect("should not fail to load config");
 
     // We create one TLSAcceptor around a shared configuration.
     // Cloning the acceptor will not clone the configuration.

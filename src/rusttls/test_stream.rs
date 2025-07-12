@@ -4,11 +4,11 @@ use futures_io::{AsyncRead, AsyncWrite};
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use futures_util::task::{noop_waker_ref, Context};
 use futures_util::{future, ready};
+use rustls::pki_types::pem::PemObject as _;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use rustls::{
-    Certificate, ClientConfig, ClientConnection, ConnectionCommon, PrivateKey, RootCertStore,
-    ServerConfig, ServerConnection, ServerName,
+    ClientConfig, ClientConnection, ConnectionCommon, RootCertStore, ServerConfig, ServerConnection,
 };
-use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::convert::TryFrom;
 use std::io::{self, BufReader, Cursor, Read, Write};
 use std::pin::Pin;
@@ -223,12 +223,14 @@ fn make_pair() -> (ServerConnection, ClientConnection) {
     const CHAIN: &str = include_str!("../../tests/end.chain");
     const RSA: &str = include_str!("../../tests/end.rsa");
 
-    let cert = certs(&mut BufReader::new(Cursor::new(CERT))).unwrap();
-    let cert = cert.into_iter().map(Certificate).collect();
-    let mut keys = pkcs8_private_keys(&mut BufReader::new(Cursor::new(RSA))).unwrap();
-    let key = PrivateKey(keys.pop().unwrap());
+    let cert = CertificateDer::pem_reader_iter(&mut BufReader::new(Cursor::new(CERT)))
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    let mut keys = PrivatePkcs8KeyDer::pem_reader_iter(&mut BufReader::new(Cursor::new(RSA)))
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    let key = PrivateKeyDer::Pkcs8(keys.pop().unwrap());
     let sconfig = ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(cert, key)
         .unwrap();
@@ -236,11 +238,12 @@ fn make_pair() -> (ServerConnection, ClientConnection) {
 
     let domain = ServerName::try_from("localhost").unwrap();
     let mut root_store = RootCertStore::empty();
-    let chain = certs(&mut BufReader::new(Cursor::new(CHAIN))).unwrap();
-    let (added, ignored) = root_store.add_parsable_certificates(&chain);
+    let chain = CertificateDer::pem_reader_iter(&mut BufReader::new(Cursor::new(CHAIN)))
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    let (added, ignored) = root_store.add_parsable_certificates(chain);
     assert!(added >= 1 && ignored == 0);
     let cconfig = ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(root_store)
         .with_no_client_auth();
     let client = ClientConnection::new(Arc::new(cconfig), domain);
