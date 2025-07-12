@@ -24,7 +24,6 @@ appveyor = { repository = "async-std/async-tls" }
 futures-io = "0.3.5"
 futures-core = "0.3.5"
 rustls = "0.23.29"
-rustls-pemfile = "1.0"
 rustls-webpki = { version = "0.103.4", optional = true }
 webpki-roots = { version = "1.0.1", optional = true }
 
