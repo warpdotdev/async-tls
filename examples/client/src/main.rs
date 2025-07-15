@@ -4,10 +4,10 @@ use async_std::prelude::*;
 use async_std::task;
 use async_tls::TlsConnector;
 
+use rustls::pki_types::pem::{self, PemObject as _};
+use rustls::pki_types::CertificateDer;
 use rustls::ClientConfig;
-use rustls_pemfile::certs;
 
-use std::io::{BufReader, Cursor};
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -55,7 +55,9 @@ fn main() -> io::Result<()> {
         // Create default connector comes preconfigured with all you need to safely connect
         // to remote servers!
         let connector = if let Some(cafile) = cafile {
-            connector_for_ca_file(cafile).await?
+            connector_for_ca_file(cafile)
+                .await
+                .expect("should not fail to load certificate")
         } else {
             TlsConnector::default()
         };
@@ -81,14 +83,12 @@ fn main() -> io::Result<()> {
     })
 }
 
-async fn connector_for_ca_file(cafile: &Path) -> io::Result<TlsConnector> {
+async fn connector_for_ca_file(cafile: &Path) -> Result<TlsConnector, pem::Error> {
     let mut root_store = rustls::RootCertStore::empty();
-    let ca_bytes = async_std::fs::read(cafile).await?;
-    let cert = certs(&mut BufReader::new(Cursor::new(ca_bytes))).unwrap();
-    debug_assert_eq!((1, 0), root_store.add_parsable_certificates(&cert));
+    let certs = CertificateDer::pem_file_iter(cafile)?.collect::<Result<Vec<_>, _>>()?;
+    debug_assert_eq!((1, 0), root_store.add_parsable_certificates(certs));
 
     let config = ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(root_store)
         .with_no_client_auth();
     Ok(TlsConnector::from(Arc::new(config)))
