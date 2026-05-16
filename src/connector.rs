@@ -3,7 +3,8 @@ use crate::common::tls_state::TlsState;
 use crate::client;
 
 use futures_io::{AsyncRead, AsyncWrite};
-use rustls::{ClientConfig, ClientConnection, OwnedTrustAnchor, RootCertStore, ServerName};
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, RootCertStore};
 use std::convert::TryFrom;
 use std::future::Future;
 use std::io;
@@ -65,15 +66,8 @@ impl From<ClientConfig> for TlsConnector {
 impl Default for TlsConnector {
     fn default() -> Self {
         let mut root_certs = RootCertStore::empty();
-        root_certs.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
-            OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
-            )
-        }));
+        root_certs.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         let config = ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(root_certs)
             .with_no_client_auth();
         Arc::new(config).into()
@@ -117,7 +111,7 @@ impl TlsConnector {
         IO: AsyncRead + AsyncWrite + Unpin,
         F: FnOnce(&mut ClientConnection),
     {
-        let domain = match ServerName::try_from(domain.as_ref()) {
+        let domain = match ServerName::try_from(domain.as_ref().to_owned()) {
             Ok(domain) => domain,
             Err(_) => {
                 return Connect(ConnectInner::Error(Some(io::Error::new(
