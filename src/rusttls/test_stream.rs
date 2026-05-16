@@ -4,9 +4,9 @@ use futures_io::{AsyncRead, AsyncWrite};
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use futures_util::task::{noop_waker_ref, Context};
 use futures_util::{future, ready};
+use rustls::pki_types::{PrivateKeyDer, ServerName};
 use rustls::{
-    Certificate, ClientConfig, ClientConnection, ConnectionCommon, PrivateKey, RootCertStore,
-    ServerConfig, ServerConnection, ServerName,
+    ClientConfig, ClientConnection, ConnectionCommon, RootCertStore, ServerConfig, ServerConnection,
 };
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::convert::TryFrom;
@@ -223,12 +223,15 @@ fn make_pair() -> (ServerConnection, ClientConnection) {
     const CHAIN: &str = include_str!("../../tests/end.chain");
     const RSA: &str = include_str!("../../tests/end.rsa");
 
-    let cert = certs(&mut BufReader::new(Cursor::new(CERT))).unwrap();
-    let cert = cert.into_iter().map(Certificate).collect();
-    let mut keys = pkcs8_private_keys(&mut BufReader::new(Cursor::new(RSA))).unwrap();
-    let key = PrivateKey(keys.pop().unwrap());
+    let cert = certs(&mut BufReader::new(Cursor::new(CERT)))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let key: PrivateKeyDer<'static> = pkcs8_private_keys(&mut BufReader::new(Cursor::new(RSA)))
+        .next()
+        .unwrap()
+        .unwrap()
+        .into();
     let sconfig = ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(cert, key)
         .unwrap();
@@ -236,11 +239,12 @@ fn make_pair() -> (ServerConnection, ClientConnection) {
 
     let domain = ServerName::try_from("localhost").unwrap();
     let mut root_store = RootCertStore::empty();
-    let chain = certs(&mut BufReader::new(Cursor::new(CHAIN))).unwrap();
-    let (added, ignored) = root_store.add_parsable_certificates(&chain);
+    let chain = certs(&mut BufReader::new(Cursor::new(CHAIN)))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let (added, ignored) = root_store.add_parsable_certificates(chain);
     assert!(added >= 1 && ignored == 0);
     let cconfig = ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(root_store)
         .with_no_client_auth();
     let client = ClientConnection::new(Arc::new(cconfig), domain);

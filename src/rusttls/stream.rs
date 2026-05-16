@@ -48,14 +48,14 @@ impl Conn<'_> {
         }
     }
 
-    pub(crate) fn reader(&mut self) -> Reader {
+    pub(crate) fn reader(&mut self) -> Reader<'_> {
         match self {
             Conn::Client(c) => c.reader(),
             Conn::Server(c) => c.reader(),
         }
     }
 
-    pub(crate) fn writer(&mut self) -> Writer {
+    pub(crate) fn writer(&mut self) -> Writer<'_> {
         match self {
             Conn::Client(c) => c.writer(),
             Conn::Server(c) => c.writer(),
